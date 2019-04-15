@@ -7,7 +7,7 @@ S3_DOWNLOAD_DIR=/opt/mysql_backups
 SNAPSHOT_BACKUP_DIR=/opt/mysql_backups/incrementals
 MYSQL_DATA_DIR=/var/lib/mysql/data
 MYSQL_LOG_DIR=/var/lib/mysql/logs
-S3_BUCKET_NAME=global-backup-storage-bucket-flhspka03aso
+S3_BUCKET_NAME=test
 
 function print_section(){
   local delimeter="---------------------"
