@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -u
+set -uex
 set -o pipefail
 
 DATE=$(date +%Y%m%d-%H%M%S)
@@ -12,7 +12,7 @@ FULL_BACKUP_NAME=full_backup_${ENVIRONMENT}_${DATE}
 INCREMENTAL_BACKUP_NAME=incremental_backup_${ENVIRONMENT}_${DATE}
 
 function full_backup(){
-  innobackupex "${BACKUP_DIR}"/"${FULL_BACKUP_NAME}" --no-timestamp|| exit 1
+  xtrabackup --safe-slave-backup --slave-info --backup --target-dir="${BACKUP_DIR}"/"${FULL_BACKUP_NAME}" || exit 1
   print_section "FULL BACKUP COMPLETE"
   gzip_backup "${FULL_BACKUP_NAME}" || exit 1
   return 0
@@ -21,6 +21,11 @@ function full_backup(){
 function gzip_backup(){
   local name=$1
   cd "${BACKUP_DIR}"
+
+  if [ ! -d ${S3_DIR} ];then
+    mkdir ${S3_DIR}
+  fi
+
   print_section "GZIP BACKUP DIR TO ${S3_DIR}"
   tar -zcvf "${name}".gz "${BACKUP_DIR}"/"${name}"/ || exit 1
   mv "${BACKUP_DIR}"/"${name}".gz "${S3_DIR}" || exit 1
@@ -29,7 +34,7 @@ function gzip_backup(){
 
 function incremental_backup(){
   local PREVIOUS_BACKUP=$1
-  innobackupex --incremental "$BACKUP_DIR"/"${INCREMENTAL_BACKUP_NAME}" --incremental-basedir="${PREVIOUS_BACKUP}" --no-timestamp || exit 1
+  xtrabackup --safe-slave-backup --slave-info --backup --target-dir="$BACKUP_DIR"/"${INCREMENTAL_BACKUP_NAME}" --incremental-basedir="${PREVIOUS_BACKUP}" --no-timestamp || exit 1
   print_section "INCREMENTAL BACKUP COMPLETE"
   gzip_backup "${INCREMENTAL_BACKUP_NAME}" || exit 1
   return 0
@@ -41,14 +46,14 @@ function prepare_backup(){
   local incremental_backup_list=$(find "${backup_dir}" -type d -name "incremental_backup*")
   local incremental_backup_array=("$incremental_backup_list")
 
-  innobackupex --apply-log --redo-only "${full_backup_dir}" || exit 1
+  xtrabackup --prepare --apply-log-only "${full_backup_dir}" || exit 1
 
   if [[ ! -z ${incremental_backup_array[*]} ]]; then
     for x in ${incremental_backup_array[*]}; do
       if [[ $x != ${incremental_backup_array[-1]} ]]; then
-        innobackupex --apply-log --redo-only "${full_backup_dir}" --incremental-dir=${x} || exit 1
+        xtrabackup --prepare --apply-log-only "${full_backup_dir}" --incremental-dir=${x} || exit 1
       else
-        innobackupex --apply-log "${full_backup_dir}" --incremental-dir=${x} || exit 1
+        xtrabackup --prepare "${full_backup_dir}" --incremental-dir=${x} || exit 1
       fi
     done
   fi
@@ -74,7 +79,7 @@ function restore_backup(){
   if [[ -d "${full_backup_dir}" ]]; then
     systemctl stop mysqld
     rm -rf /var/lib/mysql/data
-    innobackupex --copy-back "${full_backup_dir}" || exit 1
+    xtrabackup --copy-back "${full_backup_dir}" || exit 1
   else
     print_section "A FULL BACKUP DOES NOT EXIST"
     exit 1
