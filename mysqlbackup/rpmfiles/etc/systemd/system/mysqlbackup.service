@@ -1,0 +1,17 @@
+[Unit]
+Description=mysqlbackup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/mysqlbackup -bucket_name ${BUCKET_NAME} -env ${ENVIRONMENT} \
+-incremental_interval ${INCREMENTAL_INTERVAL} -mysql_user ${MYSQL_USER} -backup_dir ${BACKUP_DIR}
+KillMode=process
+Restart=always
+RestartSec=10s
+Type=simple
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

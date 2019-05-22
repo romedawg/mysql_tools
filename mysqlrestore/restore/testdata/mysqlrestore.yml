@@ -1,0 +1,9 @@
+- type: mysql
+  root_backup_dir: /opt/mysql_backups
+  full_interval: 10s
+  incremental_interval: 2s
+  mysql_hostname: 127.0.0.1
+  mysql_username: root
+  env: qa
+  mysql_password: root123
+  backups_to_keep: 1

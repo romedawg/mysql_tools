@@ -1,0 +1,24 @@
+def version = "0.1.2"
+
+rpmAssemble {
+    applicationSummary = "Database backup tool for making full and incremental backups"
+    applicationDescription = """myqlbackup is a tool written in Go that will make full or incremental backups
+of the MySQL database.  The service checks every 60 minutes and attempts 1 full backup every day and an incremental
+backup every 60 minutes."""
+    applicationVersion = "${version}"
+    systemd = true
+}
+
+rpmPublish {
+    applicationVersion = "${version}"
+}
+
+rpmFileManifest {
+
+    systemd {
+        path = "/etc/systemd/system/mysqlbackup.service"
+    }
+    mysqlbackupd{
+        path = "/etc/systemd/system/mysqlbackup.service.d"
+    }
+}

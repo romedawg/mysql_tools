@@ -1,0 +1,36 @@
+version: '2.2'
+services:
+  mysql_backup:
+    image: "nexus.dev.norvax.net:8082/gohealth/percona-mysql-5.7"
+    domainname: norvax.test
+    hostname: mysql-backup
+    environment:
+      MYSQL_SERVER_ID: 1
+      MYSQL_ROOT_PASSWD: root123
+      MYSQL_HEALTHCHECK_PASSWD: 123456
+    volumes:
+      - ./:/usr/local/bin/test:ro
+      - backups:/opt/mysql_backup
+  mysql_restore:
+    image: "nexus.dev.norvax.net:8082/gohealth/percona-mysql-5.7"
+    domainname: norvax.test
+    hostname: mysql-restore
+    healthcheck:
+      test: "true"
+    environment:
+      MYSQL_SERVER_ID: 1
+      MYSQL_ROOT_PASSWD: root123
+      MYSQL_HEALTHCHECK_PASSWD: 123456
+    volumes:
+      - ./restore-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh
+      - ./decompress_mysql_snapshot.sh:/usr/local/bin/decompress_mysql_snapshot.sh
+      - ./:/usr/local/bin/test:ro
+      - backups:/opt/mysql_backup
+  healthcheck:
+    image: "nexus.dev.norvax.net:8082/gohealth/ubuntu"
+    command: "true"
+    depends_on:
+      mysql_backup:
+        condition: service_healthy
+volumes:
+  backups:

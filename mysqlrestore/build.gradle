@@ -1,0 +1,23 @@
+def version = "2.0.0"
+
+rpmAssemble {
+    applicationSummary = "MySQL restore tool"
+    applicationDescription = """MySQL restore  tool written in Go that will list backups available from s3 
+bucket: global-backup-storage-bucket-flhspka03aso snapshot.  Will show the snapshots availabe(both full and incremental
+backups) as well as allow you to restore mysql to the snapshot provided."""
+    applicationVersion = "${version}"
+}
+
+rpmPublish {
+    applicationVersion = "${version}"
+}
+
+rpmFileManifest {
+
+    decompress_mysql_snapshot {
+        mode = "0755"
+        path = "/usr/local/bin/decompress_mysql_snapshot.sh"
+
+    }
+
+}
