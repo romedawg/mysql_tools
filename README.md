@@ -1,1 +1,1 @@
-A collection of script for managing mysql backup and restores
+A collection of scripts for managing mysql backup and restores
