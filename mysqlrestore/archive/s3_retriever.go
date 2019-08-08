@@ -3,7 +3,6 @@ package archive
 import (
 	"context"
 	"fmt"
-
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -12,14 +11,13 @@ import (
 	"syscall"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/mholt/archiver"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
+
+	"bb.dev.norvax.net/dep/operator/backups/mysqlrestore/execute"
 )
 
 // Used in the Get method to download the snapshot.
@@ -65,11 +63,17 @@ func untar(ctx context.Context, restoreDir string) error {
 	group, _ := errgroup.WithContext(ctx)
 	for _, file := range tarFiles {
 		fileTemp := file
+		defer os.Remove(fileTemp)
 		wrap := func() error {
-			defer os.Remove(fileTemp)
-			log.Infof("untar file %s", fileTemp)
-			tar := archiver.Tar{}
-			return tar.Unarchive(fileTemp, restoreDir)
+			log.Debugf("untarring %s", fileTemp)
+			prepareCmdLine := []string{
+				"tar",
+				"-xzf",
+				fileTemp,
+				"--directory",
+				restoreDir,
+			}
+			return execute.CmdRun(ctx, prepareCmdLine)
 		}
 		group.Go(wrap)
 	}
@@ -90,24 +94,21 @@ func untar(ctx context.Context, restoreDir string) error {
 }
 
 func download(ctx context.Context, bucket, snapshot, restoreDir string) error {
-	log.Infof("downloading snapshot %v, in %v", restoreDir, snapshot)
+	log.Infof("downloading snapshot %v, to directory: %v", snapshot, restoreDir)
 	if snapshot == "" {
 		return errors.New("snapshot flag is not set so a restore cannot be performed")
 	}
 
-	log.Debugf("create snapshot directory: %s", restoreDir)
 	if err := os.MkdirAll(restoreDir, 0700); err != nil {
 		return errors.Wrap(err, "failed to create restore directory")
 	}
 
 	log.Debug("creating s3client")
-	s3Client, err := getS3Client()
+	s3Client, err := execute.GetS3Client()
 	if err != nil {
 		return errors.Wrap(err, "failed to create s3 client")
 	}
 
-	log.Debugf("get a list of snapshotFiles s3client")
-	log.Debugf("bucket: %s snapshot: %s", bucket, snapshot)
 	snapshotFiles, err := listBucketFiles(s3Client, bucket, snapshot)
 	if err != nil {
 		return errors.Wrap(err, "failed to get list of snapshotFiles for snapshot in bucket")
@@ -123,15 +124,16 @@ func download(ctx context.Context, bucket, snapshot, restoreDir string) error {
 		log.Debugf("creating local file of backup to download to: %s", localPath)
 		localFile, err := os.Create(localPath)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "failed to create dir fo %s", localPath)
 		}
 
 		input := &s3.GetObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(b),
 		}
+
 		wrap := func() error {
-			log.Infof("Downloading: %s", input)
+			log.Debugf("Downloading: %s", input)
 			_, err := downloader.DownloadWithContext(ctx, localFile, input)
 			return err
 		}
@@ -169,7 +171,7 @@ func listBucketFiles(s3Client *s3.S3, bucket, prefix string) ([]string, error) {
 
 	var objects []string
 	for _, k := range resp.Contents {
-		if strings.Contains(*k.Key, ".tar") {
+		if strings.Contains(*k.Key, ".tgz") {
 			objects = append(objects, *k.Key)
 		}
 	}
@@ -178,27 +180,4 @@ func listBucketFiles(s3Client *s3.S3, bucket, prefix string) ([]string, error) {
 	}
 
 	return objects, nil
-}
-
-func getS3Client() (*s3.S3, error) {
-	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	if secretKey == "" {
-		return nil, errors.New("environment variable AWS_SECRET_ACCESS_KEY is not set")
-	}
-	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	if accessKey == "" {
-		return nil, errors.New("environment variable AWS_ACCESS_KEY_ID is not set")
-	}
-	region := os.Getenv("AWS_REGION")
-	if region == "" {
-		region = "us-east-2"
-	}
-	token := os.Getenv("AWS_SESSION_TOKEN")
-	creds := credentials.NewStaticCredentials(accessKey, secretKey, token)
-	cfg := aws.NewConfig().WithRegion(region).WithCredentials(creds)
-	sess, err := session.NewSession(cfg)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create aws session")
-	}
-	return s3.New(sess), nil
 }

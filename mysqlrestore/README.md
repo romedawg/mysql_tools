@@ -20,7 +20,7 @@ AWS_REGION
 ```
 
 These command line arguments need to be set when running mysqlrestore
-ops        = operation to be run.  list or restore
+ops        = operation to be run.  list, restore, latest(which will restore the most recent snapshot)
 env        = environment to run the operation(qa, uat, prod)
 bucket     - snapshots to restore.
 snapshot   - snapshot to be restored

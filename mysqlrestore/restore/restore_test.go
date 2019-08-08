@@ -119,24 +119,28 @@ func archiveBackup(ctx context.Context, dir string, backupType string) error {
 	}
 
 	tar := archiver.Tar{}
-	fmt.Printf("source tar %s\n", filepath.Join(rootBackupDir, dir))
-	fmt.Printf("destination %s\n", filepath.Join(rootBackupDir, fmt.Sprintf("%s.tar", backupType)))
+	log.Infof("source tar %s\n", filepath.Join(rootBackupDir, dir))
+	log.Infof("destination %s\n", filepath.Join(rootBackupDir, fmt.Sprintf("%s.tgz", backupType)))
+	log.Infof("dir: %s, rootBackupDir: %s, backupType %s.", dir, rootBackupDir, backupType)
 	err = tar.Archive([]string{dir}, fmt.Sprintf("%s/%s.tar", rootBackupDir, backupType))
 	if err != nil {
 		return errors.Wrapf(err, "failed to archive dir %s", dir)
 	}
 
-	fmt.Printf("archiving.. removing %s\n", dir)
+	log.Infof("archiving.. removing %s\n", dir)
 	err = clearArchiveDir(filepath.Join(rootBackupDir, dir))
 	if err != nil {
 		return errors.Wrapf(err, "failed to remove %s", dir)
 	}
+	log.Info("exiting archiveBackup method\n")
 	return nil
 
 }
 
 func createDb(ctx context.Context, db *sql.DB, dbName string) error {
+	log.Infof("creating database connection in createDB, dbname %s", dbName)
 	query := fmt.Sprintf("CREATE DATABASE %s", dbName)
+	log.Info("db.PrepareContext(ctx, query)")
 	stmt, err := db.PrepareContext(ctx, query)
 	if err != nil {
 		return errors.Wrapf(err, "failed to prepare SQL statement %q", query)
@@ -149,6 +153,7 @@ func createDb(ctx context.Context, db *sql.DB, dbName string) error {
 }
 
 func runCmd(ctx context.Context, cmdLine []string) error {
+	log.Infof("running runCmd %s", cmdLine)
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, cmdLine[0], cmdLine[1:]...)
 	cmd.Stdout = &stdout
@@ -156,11 +161,13 @@ func runCmd(ctx context.Context, cmdLine []string) error {
 	if err := cmd.Run(); err != nil {
 		return errors.Wrapf(err, "command failed %v, stdout: %s, stderr: %s", cmdLine, stdout.String(), stderr.String())
 	}
+	log.Infof("running runCmd complete")
 	return nil
 }
 
 func createBackup(ctx context.Context, backupDir string, backupType string) error {
 
+	log.Infof("creating db backup in %s", backupDir)
 	err := os.MkdirAll(backupDir, 0777)
 	if err != nil {
 		return errors.Wrapf(err, "could not create %s", backupDir)
@@ -185,10 +192,12 @@ func createBackup(ctx context.Context, backupDir string, backupType string) erro
 		}
 		err = runCmd(ctx, cmdLines)
 		if err != nil {
-			return errors.Wrapf(err, "failed to perpare backup")
+			return errors.Wrapf(err, "failed to prepare backup")
 		}
+
 		return nil
 	}
+	log.Info("full backup completed")
 
 	cmdLines := []string{
 		"innobackupex",

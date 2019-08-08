@@ -1,0 +1,18 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  provisions dns records for GoHealth hosted zones.
+
+Parameters:
+  TTL:
+    Type: Number
+    Description: How long to set the TTL for these DNS records.
+  ZoneName:
+    Type: String
+    Description: Name of the HostedZone these RecordSets need to go into.
+Resources:
+  DNSRecordSet:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneName: !Ref ZoneName
+      Comment: DNS RecordSet for !Ref ZoneName
+      RecordSets:

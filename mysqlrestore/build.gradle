@@ -1,15 +1,10 @@
-def version = "2.0.0"
+version = "2.1.1"
 
 rpmAssemble {
     applicationSummary = "MySQL restore tool"
-    applicationDescription = """MySQL restore  tool written in Go that will list backups available from s3 
-bucket: global-backup-storage-bucket-flhspka03aso snapshot.  Will show the snapshots availabe(both full and incremental
-backups) as well as allow you to restore mysql to the snapshot provided."""
-    applicationVersion = "${version}"
-}
-
-rpmPublish {
-    applicationVersion = "${version}"
+    applicationDescription = """MySQL restore tool that lists backups available in s3 
+bucket: global-backup-storage-bucket-flhspka03aso.  Will show the snapshots available (both full and incremental
+backups) as well as allow you to restore MySQL from any the snapshot found in the bucket."""
 }
 
 rpmFileManifest {

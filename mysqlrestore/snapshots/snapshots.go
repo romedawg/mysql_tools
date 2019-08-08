@@ -1,77 +1,108 @@
 package snapshots
 
 import (
-	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
+	"bb.dev.norvax.net/dep/operator/backups/mysqlrestore/execute"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
-// Returns a json list of the snapshots available in s3 based on environment passed in at runtime.
-func ListSnapshot(env, bucket string) ([]byte, error) {
-	s3Client, err := getS3Client()
+type SnapshotMeta struct {
+	SnapshotName string
+	Timestamp    time.Time
+	Path         string
+}
+
+type snapshotSlices []SnapshotMeta
+
+func getSnapshots(env, bucket, cluster string) ([]s3.Object, error) {
+	snapshotObjects := []s3.Object{}
+	s3Client, err := execute.GetS3Client()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create s3 client")
 	}
-
+	cluster_type := fmt.Sprintf("cluster_%s", cluster)
 	params := &s3.ListObjectsInput{
 		Bucket: aws.String(bucket),
-		Prefix: aws.String(filepath.Join(env)),
+		//Prefix: aws.String(filepath.Join(env)),
+		Prefix: aws.String(filepath.Join(env, "mysql", cluster_type)),
+		// We only care about snapshot groups w/ full backups. This also helps limit the returns.
+		Delimiter: aws.String("incremental_backup"),
 	}
 	log.Debugf("s3 request bucket: %s, prefix: %s", *params.Bucket, *params.Prefix)
 	resp, err := s3Client.ListObjects(params)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to list objects in s3 bucket %s", bucket)
 	}
-	snapshotKeys := make(map[string]struct{})
+
 	for _, key := range resp.Contents {
-		snapshot := *key.Key
-		if strings.Contains(snapshot, "snapshot") && strings.Contains(snapshot, ".tar") {
-			key := filepath.Dir(snapshot)
-			if _, ok := snapshotKeys[key]; !ok {
-				snapshotKeys[key] = struct{}{}
-			}
+		log.Debugf("s3 object key names are %s", *key.Key)
+		if strings.HasSuffix(*key.Key, "full_backup") {
+			log.Infof("key name with full backup hasSuffix %s", *key.Key)
 		}
-	}
-	log.Debugf("found snapshotKeys: %v", snapshotKeys)
-	var snapshots []string
-	for k := range snapshotKeys {
-		snapshots = append(snapshots, k)
+		snapshotObjects = append(snapshotObjects, *key)
 	}
 
-	jsonSnapshots, err := json.MarshalIndent(snapshots, " ", "")
-	if err != nil {
-		return nil, errors.Wrapf(err, "could not generate json of s3 snapshots")
-	}
-	return jsonSnapshots, nil
+	return snapshotObjects, nil
 }
 
-func getS3Client() (*s3.S3, error) {
-	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	if secretKey == "" {
-		return nil, errors.New("environment variable AWS_SECRET_ACCESS_KEY is not set")
-	}
-	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	if accessKey == "" {
-		return nil, errors.New("environment variable AWS_ACCESS_KEY_ID is not set")
-	}
-	region := os.Getenv("AWS_REGION")
-	if region == "" {
-		region = "us-east-2"
-	}
-	token := os.Getenv("AWS_SESSION_TOKEN")
-	creds := credentials.NewStaticCredentials(accessKey, secretKey, token)
-	cfg := aws.NewConfig().WithRegion(region).WithCredentials(creds)
-	sess, err := session.NewSession(cfg)
+// Returns a json list of the snapshots available in s3 based on environment passed in at runtime.
+func ListSnapshots(env, bucket, cluster string) ([]SnapshotMeta, string, error) {
+
+	var snapshotList []SnapshotMeta
+	//var snapshotList []string
+	snapshots, err := getSnapshots(env, bucket, cluster)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create aws session")
+		return nil, "", errors.WithStack(err)
 	}
-	return s3.New(sess), nil
+
+	for _, snapshot := range snapshots {
+		snapshotkey := strings.Split(*snapshot.Key, "/")
+		s3UrlPrefix := strings.Join(snapshotkey[0:5], "/")
+		snapshotList = append(snapshotList, SnapshotMeta{snapshotkey[5], *snapshot.LastModified, s3UrlPrefix})
+	}
+
+	log.Debugf("snapshot object %s", snapshotList)
+	sortedSnapshots := sortSnapshots(snapshotList)
+
+	// Building this string for convenience when outputting latest snapshot
+	if len(sortedSnapshots) == 0 {
+		log.Infof("there are no snapshots available, check bucket: %s", bucket)
+		os.Exit(1)
+	}
+	snapshotLen := len(sortedSnapshots)
+	mostRecentSnapshot := fmt.Sprintf("%s/mysql/cluster_%s/%d/%d/%s", env, cluster, sortedSnapshots[snapshotLen-1].Timestamp.Year(), sortedSnapshots[snapshotLen-1].Timestamp.Month(), sortedSnapshots[snapshotLen-1].SnapshotName)
+
+	return sortedSnapshots, mostRecentSnapshot, nil
+}
+
+func (s snapshotSlices) Len() int {
+	return len(s)
+}
+
+func (s snapshotSlices) Less(i, j int) bool {
+	return s[i].Timestamp.Before(s[j].Timestamp)
+}
+
+func (s snapshotSlices) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func sortSnapshots(snapshots []SnapshotMeta) []SnapshotMeta {
+
+	sortedSnapshots := make(snapshotSlices, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		sortedSnapshots = append(sortedSnapshots, snapshot)
+	}
+
+	sort.Sort(sortedSnapshots)
+	return sortedSnapshots
 }

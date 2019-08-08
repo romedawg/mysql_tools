@@ -1,21 +1,19 @@
 package restore
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
-	"os/exec"
-	"os/signal"
 	"os/user"
 	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
+
+	"bb.dev.norvax.net/dep/operator/backups/mysqlrestore/execute"
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -34,7 +32,7 @@ type SnapshotRetriever interface {
 // Combines all the functions in the mysqlrestore module(download, untar, decompress, prepare, etc..).
 func Snapshot(ctx context.Context, retriever SnapshotRetriever, restoreDir string, datadir string) error {
 
-	log.Info("Get snapshot from archive")
+	log.Debug("Downloading snapshot..")
 	if err := retriever.Get(ctx, restoreDir); err != nil {
 		return errors.Wrap(err, "failed to get snapshot from archive")
 	}
@@ -44,12 +42,12 @@ func Snapshot(ctx context.Context, retriever SnapshotRetriever, restoreDir strin
 		return errors.Wrap(err, "failed to get snapshot from archive")
 	}
 
-	log.Infof("Decompressing snapshots in %s", restoreDir)
+	log.Debugf("Decompressing snapshots in %s", restoreDir)
 	if err := decompressMySQLFiles(ctx, restoreDir); err != nil {
 		return errors.Wrapf(err, "failed to decompressMySQLFiles snapshots")
 	}
 
-	log.Infof("Preparing snapshots")
+	log.Debugf("Preparing snapshots")
 	fullBackupDir, err := prepare(ctx, restoreDir)
 	if err != nil {
 		return errors.Wrapf(err, "failed to prepare snapshots")
@@ -88,46 +86,12 @@ func ClearRestoreDir(restoreDir string) error {
 		return errors.Wrapf(err, "could not get a directory list from dir %s", dirFiles)
 	}
 
-	log.Debugf("removing contents from %s", restoreDir)
+	log.Debugf("Delete all files from %s", restoreDir)
 	for _, dirName := range dirFiles {
 		os.RemoveAll(filepath.Join(restoreDir, dirName))
 	}
 
 	return nil
-}
-
-func cmdRun(ctx context.Context, cmdLine []string) error {
-	var stderr, stdout bytes.Buffer
-	procCtx, procCancel := context.WithCancel(ctx)
-	defer procCancel()
-	cmd := exec.CommandContext(procCtx, cmdLine[0], cmdLine[1:]...)
-
-	cmd.Stderr = &stderr
-	cmd.Stdout = &stdout
-
-	err := cmd.Start()
-	if err != nil {
-		return errors.Wrapf(err, "could not execute cmd.Start")
-	}
-	done := make(chan error)
-	go func() {
-		done <- cmd.Wait()
-	}()
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	select {
-	case <-procCtx.Done():
-		procCancel()
-		return procCtx.Err()
-	case <-stop:
-		procCancel()
-		err := <-done
-		return errors.Wrapf(err, "command failed %v %s %s", cmdLine, stderr.String(), stdout.String())
-	case err := <-done:
-		procCancel()
-		return errors.Wrapf(err, "command failed %v %s %s", cmdLine, stderr.String(), stdout.String())
-	}
 }
 
 func decompressMySQLFiles(ctx context.Context, restoreDir string) error {
@@ -140,7 +104,7 @@ func decompressMySQLFiles(ctx context.Context, restoreDir string) error {
 	cmdLine := []string{"/usr/local/bin/decompress_mysql_snapshot.sh", restoreDir}
 
 	log.Debugf("executing %s on directories %s", cmdLine, restoreDir)
-	err := cmdRun(ctx, cmdLine)
+	err := execute.CmdRun(ctx, cmdLine)
 	if err != nil {
 		return errors.Wrapf(err, "cmd failed")
 	}
@@ -170,8 +134,6 @@ func prepare(ctx context.Context, restoreDir string) (string, error) {
 	if len(snapshotDir[0]) == 0 {
 		log.Errorf("Snapshot directory empty, could not find a full backup in %s", fullBackupDir)
 	}
-	log.Infof("full backup path is %s", fullBackupDir)
-
 	log.Debugf("preparing full backup %s", fullBackupDir)
 	prepareCmdLine := []string{
 		"innobackupex",
@@ -181,13 +143,13 @@ func prepare(ctx context.Context, restoreDir string) (string, error) {
 		"--use-memory=2G", fullBackupDir,
 	}
 
-	err = cmdRun(ctx, prepareCmdLine)
+	err = execute.CmdRun(ctx, prepareCmdLine)
 	if err != nil {
 		return "", errors.Wrapf(err, "cmd failed %s", strings.Join(prepareCmdLine, " "))
 	}
 
 	for _, incrementalBackupPath := range snapshotDir[1:] {
-		log.Infof("preparing incrementalBackupPath for incremental backups %s", incrementalBackupPath)
+		log.Debugf("preparing incrementalBackupPath for incremental backups %s", incrementalBackupPath)
 		prepareCmdLine := []string{
 			"innobackupex",
 			"--apply-log",
@@ -197,7 +159,7 @@ func prepare(ctx context.Context, restoreDir string) (string, error) {
 			fullBackupDir, fmt.Sprintf("--incremental=%s", incrementalBackupPath),
 		}
 
-		err := cmdRun(ctx, prepareCmdLine)
+		err := execute.CmdRun(ctx, prepareCmdLine)
 		if err != nil {
 			return "", errors.Wrapf(err, "cmd failed %s", strings.Join(prepareCmdLine, " "))
 		}
@@ -280,15 +242,12 @@ func chownMysqlDir(mysqlDataDir string) error {
 
 // Will execute 'systemctl start mysqld' once the snapshot is restored.
 func StartMysql(ctx context.Context) error {
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	log.Infof("starting mysqld")
-
-	startMysqlCmdLine := []string{"/bin/systemctl", "start", "mysqld"}
-	log.Debugf("executing command %s", startMysqlCmdLine)
-	err := cmdRun(ctx, startMysqlCmdLine)
+	log.Infof("starting mysql")
+	startMysqlCmdLine := []string{"/bin/systemctl", "start", "mysql"}
+	err := execute.CmdRun(ctx, startMysqlCmdLine)
 
 	if err != nil {
 		return errors.Wrapf(err, "cmd failed %s.", startMysqlCmdLine)
